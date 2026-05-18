@@ -6,15 +6,30 @@ Steno's dependency licence policy is defined in [docs/STENO-V1-SPEC.md](docs/STE
 
 **Forbidden:** GPL (any version), AGPL, LGPL, SSPL, custom non-standard licences.
 
-This file records the licence of every third-party dependency added to the project. It is updated whenever a dependency is introduced. If a desirable dependency carries a forbidden licence, the agent stops and asks before adding it.
+This file records the licence of every direct third-party dependency. It is updated whenever a dependency is added or removed. Transitive-dependency verification (via `cargo deny check` and equivalents) is deferred to Milestone 7 (polish & packaging); this file will be regenerated with full coverage at that point.
 
-## Rust crates
+## Rust crates (direct dependencies — see `src-tauri/Cargo.toml`)
 
-_None yet — `Cargo.toml` not initialised._
+| Crate | Licence | Notes |
+|---|---|---|
+| `tauri` | MIT OR Apache-2.0 | App framework |
+| `tauri-build` | MIT OR Apache-2.0 | Build dep |
+| `serde` | MIT OR Apache-2.0 | Serialisation |
+| `serde_json` | MIT OR Apache-2.0 | JSON support |
 
-## Node packages
+## Node packages (direct dependencies — see `package.json`)
 
-_None yet — `package.json` not initialised._
+| Package | Licence | Notes |
+|---|---|---|
+| `react` | MIT | UI runtime |
+| `react-dom` | MIT | DOM renderer |
+| `@tauri-apps/api` | MIT OR Apache-2.0 | Tauri JS bindings |
+| `@types/react` | MIT | TS types (dev) |
+| `@types/react-dom` | MIT | TS types (dev) |
+| `@vitejs/plugin-react` | MIT | Vite React plugin (dev) |
+| `typescript` | Apache-2.0 | TS compiler (dev) |
+| `vite` | MIT | Build tool (dev) |
+| `@tauri-apps/cli` | MIT OR Apache-2.0 | Tauri CLI (dev) |
 
 ## Models and binary assets
 

@@ -18,7 +18,27 @@ Coming soon.
 
 ## Build from source
 
-Instructions will land with the v1.0 release.
+Requirements:
+
+- Rust 1.78+ stable
+- Node 20 LTS or later
+- pnpm 9+
+- Platform build dependencies per the [Tauri prerequisites guide](https://tauri.app/start/prerequisites/)
+
+```sh
+git clone https://github.com/stenoapp/steno.git
+cd steno
+pnpm install
+pnpm tauri dev
+```
+
+For a release build with installer artifacts:
+
+```sh
+pnpm tauri build
+```
+
+Output lands in `src-tauri/target/release/bundle/`.
 
 ## Licence
 
