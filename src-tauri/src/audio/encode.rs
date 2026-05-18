@@ -1,6 +1,5 @@
-use audiopus::coder::Encoder;
-use audiopus::{Application, Bitrate, Channels, SampleRate};
 use ogg::writing::{PacketWriteEndInfo, PacketWriter};
+use opus::{Application, Bitrate, Channels, Encoder};
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
@@ -35,10 +34,10 @@ impl OpusOggWriter {
         } else {
             Channels::Stereo
         };
-        let mut encoder = Encoder::new(SampleRate::Hz48000, opus_channels, Application::Voip)
+        let mut encoder = Encoder::new(SAMPLE_RATE_HZ as u32, opus_channels, Application::Voip)
             .map_err(|e| format!("opus encoder new: {e}"))?;
         encoder
-            .set_bitrate(Bitrate::BitsPerSecond(bitrate_bps))
+            .set_bitrate(Bitrate::Bits(bitrate_bps))
             .map_err(|e| format!("opus set_bitrate: {e}"))?;
 
         let file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
