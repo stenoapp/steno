@@ -1,7 +1,7 @@
 use crate::audio::capture::MicRecorder;
+use chrono::Local;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 
 pub struct AppState {
@@ -31,9 +31,6 @@ pub fn stop_recording(state: State<AppState>) -> Result<String, String> {
 fn audio_output_path() -> Result<PathBuf, String> {
     let documents = dirs::document_dir().ok_or("no Documents directory")?;
     let dir = documents.join("Steno").join(".steno").join("audio");
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    Ok(dir.join(format!("mic-{ts}.wav")))
+    let stamp = Local::now().format("%Y-%m-%d-%H%M").to_string();
+    Ok(dir.join(format!("{stamp}-mic.opus")))
 }

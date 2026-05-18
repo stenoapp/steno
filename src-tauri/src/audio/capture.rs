@@ -4,7 +4,15 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use super::encode::OpusOggWriter;
+
+const TARGET_SAMPLE_RATE_HZ: u32 = 48_000;
+const OPUS_BITRATE_BPS: i32 = 32_000;
+
 pub struct RecordingMeta {
+    // Kept for M1.4 mixing (must match between mic and system streams);
+    // unused by the current Opus-encoded mic-only path which hard-codes 48 kHz.
+    #[allow(dead_code)]
     pub sample_rate: u32,
     pub channels: u16,
 }
@@ -57,9 +65,22 @@ impl MicRecorder {
 
             let sample_rate = supported.sample_rate().0;
             let channels = supported.channels();
+
+            if sample_rate != TARGET_SAMPLE_RATE_HZ {
+                let _ = ready_tx.send(Err(format!(
+                    "device sample rate is {sample_rate} Hz; M1.2 requires {TARGET_SAMPLE_RATE_HZ} Hz (resampling lands in a later M1 sub-step)"
+                )));
+                return RecordingMeta { sample_rate, channels };
+            }
+            if channels != 1 && channels != 2 {
+                let _ = ready_tx.send(Err(format!(
+                    "device reports {channels} channels; Opus supports 1 (mono) or 2 (stereo)"
+                )));
+                return RecordingMeta { sample_rate, channels };
+            }
+
             let sample_format = supported.sample_format();
             let config: cpal::StreamConfig = supported.into();
-
             let err_fn = |err| eprintln!("[steno] audio stream error: {err}");
 
             let build_result = match sample_format {
@@ -157,23 +178,11 @@ impl MicRecorder {
                 .map_err(|e| format!("create dir {}: {e}", parent.display()))?;
         }
 
-        let spec = hound::WavSpec {
-            channels: meta.channels,
-            sample_rate: meta.sample_rate,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
-
-        let mut writer = hound::WavWriter::create(out_path, spec)
-            .map_err(|e| format!("create wav writer: {e}"))?;
-
+        let mut writer = OpusOggWriter::new(out_path, meta.channels, OPUS_BITRATE_BPS)?;
         let samples = self.samples.lock().unwrap();
-        for &sample in samples.iter() {
-            writer
-                .write_sample(sample)
-                .map_err(|e| format!("write sample: {e}"))?;
-        }
-        writer.finalize().map_err(|e| format!("finalize wav: {e}"))?;
+        writer.encode_pcm(&samples)?;
+        drop(samples);
+        writer.finalize()?;
 
         Ok(out_path.to_path_buf())
     }

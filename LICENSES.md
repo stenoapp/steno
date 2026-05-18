@@ -16,8 +16,10 @@ This file records the licence of every direct third-party dependency. It is upda
 | `tauri-build` | MIT OR Apache-2.0 | Build dep |
 | `serde` | MIT OR Apache-2.0 | Serialisation |
 | `serde_json` | MIT OR Apache-2.0 | JSON support |
-| `cpal` | Apache-2.0 | Cross-platform audio I/O (M1 mic capture) |
-| `hound` | Apache-2.0 | WAV writer (interim until Opus lands in M1.2) |
+| `cpal` | Apache-2.0 | Cross-platform audio I/O (mic capture) |
+| `audiopus` | Apache-2.0 (wraps libopus, BSD-3-Clause) | Opus encoder; `static` feature vendors libopus |
+| `ogg` | Apache-2.0 OR MIT | OggOpus muxing |
+| `chrono` | Apache-2.0 OR MIT | Date/time formatting for filenames + future frontmatter |
 | `dirs` | MIT OR Apache-2.0 | Cross-platform user directories |
 
 ## Node packages (direct dependencies — see `package.json`)
