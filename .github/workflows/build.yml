@@ -35,7 +35,8 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            libssl-dev
+            libssl-dev \
+            libasound2-dev
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
