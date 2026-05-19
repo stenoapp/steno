@@ -25,7 +25,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-latest, name: macOS }
+          # Pinned: macos-latest's default Xcode lacked Metal 3 SDK symbols
+          # (MTLSamplerReductionMode) needed by apple-metal 0.8.5's Swift
+          # bridge — a transitive dep of screencapturekit. macos-14 ships
+          # Xcode 15+ which covers it.
+          - { os: macos-14, name: macOS }
           - { os: ubuntu-22.04, name: Linux }
           - { os: windows-latest, name: Windows }
 
