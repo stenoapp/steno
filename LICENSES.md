@@ -21,6 +21,7 @@ This file records the licence of every direct third-party dependency. It is upda
 | `ogg` | Apache-2.0 OR MIT | OggOpus muxing |
 | `chrono` | Apache-2.0 OR MIT | Date/time formatting for filenames + future frontmatter |
 | `dirs` | MIT OR Apache-2.0 | Cross-platform user directories |
+| `screencapturekit` | MIT OR Apache-2.0 | macOS-only: system audio capture via ScreenCaptureKit (pinned `=3.1.3`; pulls `apple-cf`, `apple-metal`, `doom-fish-utils` — all MIT OR Apache-2.0) |
 
 ## Node packages (direct dependencies — see `package.json`)
 

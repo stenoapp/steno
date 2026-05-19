@@ -1,17 +1,13 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use super::encode::OpusOggWriter;
-
 const TARGET_SAMPLE_RATE_HZ: u32 = 48_000;
-const OPUS_BITRATE_BPS: i32 = 32_000;
 
 pub struct RecordingMeta {
-    // Kept for M1.4 mixing (must match between mic and system streams);
-    // unused by the current Opus-encoded mic-only path which hard-codes 48 kHz.
+    // Always equal to TARGET_SAMPLE_RATE_HZ if start() returned Ok;
+    // kept on the struct for future M1.4 mix logic.
     #[allow(dead_code)]
     pub sample_rate: u32,
     pub channels: u16,
@@ -68,13 +64,13 @@ impl MicRecorder {
 
             if sample_rate != TARGET_SAMPLE_RATE_HZ {
                 let _ = ready_tx.send(Err(format!(
-                    "device sample rate is {sample_rate} Hz; M1.2 requires {TARGET_SAMPLE_RATE_HZ} Hz (resampling lands in a later M1 sub-step)"
+                    "device sample rate is {sample_rate} Hz; M1 requires {TARGET_SAMPLE_RATE_HZ} Hz (resampling lands in a later M1 sub-step)"
                 )));
                 return RecordingMeta { sample_rate, channels };
             }
-            if channels != 1 && channels != 2 {
+            if channels < 1 || channels > 8 {
                 let _ = ready_tx.send(Err(format!(
-                    "device reports {channels} channels; Opus supports 1 (mono) or 2 (stereo)"
+                    "device reports {channels} channels; refusing to capture (downmix supports 1-8)"
                 )));
                 return RecordingMeta { sample_rate, channels };
             }
@@ -166,24 +162,51 @@ impl MicRecorder {
         }
     }
 
-    pub fn stop(&mut self, out_path: &Path) -> Result<PathBuf, String> {
+    /// Stop the cpal stream and return the captured samples downmixed to
+    /// mono. Sample rate is always 48 kHz (enforced at start). Caller owns
+    /// the samples — encoding happens in `commands.rs`.
+    pub fn stop(&mut self) -> Result<Vec<f32>, String> {
         let stop_tx = self.stop_tx.take().ok_or("not recording")?;
         let thread = self.thread.take().ok_or("not recording")?;
 
         let _ = stop_tx.send(());
         let meta = thread.join().map_err(|_| "audio thread panicked")?;
 
-        if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("create dir {}: {e}", parent.display()))?;
-        }
+        let interleaved = std::mem::take(&mut *self.samples.lock().unwrap());
+        Ok(downmix_to_mono(&interleaved, meta.channels))
+    }
+}
 
-        let mut writer = OpusOggWriter::new(out_path, meta.channels, OPUS_BITRATE_BPS)?;
-        let samples = self.samples.lock().unwrap();
-        writer.encode_pcm(&samples)?;
-        drop(samples);
-        writer.finalize()?;
+fn downmix_to_mono(interleaved: &[f32], channels: u16) -> Vec<f32> {
+    if channels <= 1 {
+        return interleaved.to_vec();
+    }
+    let chs = channels as usize;
+    let frames = interleaved.len() / chs;
+    let mut mono = Vec::with_capacity(frames);
+    for frame in interleaved.chunks_exact(chs) {
+        let sum: f32 = frame.iter().sum();
+        mono.push(sum / chs as f32);
+    }
+    mono
+}
 
-        Ok(out_path.to_path_buf())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn downmix_mono_passthrough() {
+        let input = vec![0.1, 0.2, 0.3];
+        let mono = downmix_to_mono(&input, 1);
+        assert_eq!(mono, input);
+    }
+
+    #[test]
+    fn downmix_stereo_averages_lr() {
+        // Interleaved [L0, R0, L1, R1]
+        let input = vec![1.0, 0.0, 0.5, 0.5];
+        let mono = downmix_to_mono(&input, 2);
+        assert_eq!(mono, vec![0.5, 0.5]);
     }
 }

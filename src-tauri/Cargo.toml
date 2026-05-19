@@ -26,3 +26,9 @@ opus = "0.3"
 ogg = "0.9"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "5"
+
+# macOS-only: system audio capture via ScreenCaptureKit.
+# Hard pin: maintainer shipped 6 breaking releases on 2026-05-17/18.
+# Linux (PipeWire) and Windows (WASAPI loopback) lands in M1.4.
+[target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = "=3.1.3"
