@@ -10,3 +10,9 @@ pub mod system_linux;
 
 #[cfg(target_os = "linux")]
 pub use system_linux as system;
+
+#[cfg(target_os = "windows")]
+pub mod system_windows;
+
+#[cfg(target_os = "windows")]
+pub use system_windows as system;

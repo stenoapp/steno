@@ -6,14 +6,14 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 use crate::audio::system::SystemAudioRecorder;
 
 const OPUS_BITRATE_BPS: i32 = 32_000;
 
 pub struct AppState {
     pub mic: Mutex<MicRecorder>,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     pub system: Mutex<SystemAudioRecorder>,
 }
 
@@ -21,7 +21,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             mic: Mutex::new(MicRecorder::new()),
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
             system: Mutex::new(SystemAudioRecorder::new()),
         }
     }
@@ -35,14 +35,14 @@ pub fn start_recording(state: State<AppState>) -> Result<(), String> {
     // already broken).
     state.mic.lock().unwrap().start()?;
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
         if let Err(e) = state.system.lock().unwrap().start() {
             // Wind back the mic so the user can retry with system-audio
-            // disabled (M1.5) once we add a toggle. For M1.3/M1.4 hard-fail.
+            // disabled (M1.5) once we add a toggle. Hard-fail for now.
             let _ = state.mic.lock().unwrap().stop();
             return Err(format!(
-                "system audio start failed (Screen Recording / PipeWire permission may be required): {e}"
+                "system audio start failed (Screen Recording / PipeWire / WASAPI permission may be required): {e}"
             ));
         }
     }
@@ -57,13 +57,13 @@ pub fn stop_recording(state: State<AppState>) -> Result<String, String> {
     // audio thread; we accept whatever it has when we lock.
     let mic_samples = state.mic.lock().unwrap().stop()?;
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     let system_samples = state.system.lock().unwrap().stop().unwrap_or_else(|e| {
         eprintln!("[steno] system stop warning (saving mic only): {e}");
         Vec::new()
     });
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     let system_samples: Vec<f32> = Vec::new();
 
     let has_system = !system_samples.is_empty();
