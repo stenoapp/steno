@@ -50,6 +50,14 @@ jobs:
             libssl-dev \
             libasound2-dev
 
+      # apple-metal 0.8.x's Swift bridge uses APIs from the macOS 26 SDK
+      # (MTLSamplerDescriptor.reductionMode, .lodBias). macos-15 defaults
+      # to Xcode 16.4 which ships only the macOS 15.5 SDK. The image
+      # also ships Xcode 26.x — pin it explicitly.
+      - name: Select Xcode 26.3 (macOS 26 SDK)
+        if: matrix.os == 'macos-15'
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
       - name: Install pnpm
         uses: pnpm/action-setup@v5
         with:
