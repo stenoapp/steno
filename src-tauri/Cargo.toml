@@ -29,6 +29,11 @@ dirs = "5"
 
 # macOS-only: system audio capture via ScreenCaptureKit.
 # Hard pin: maintainer shipped 6 breaking releases on 2026-05-17/18.
-# Linux (PipeWire) and Windows (WASAPI loopback) lands in M1.4.
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = "=3.1.3"
+
+# Linux-only: system audio capture via PipeWire. Connects to the default
+# sink's monitor source (PW_KEY_STREAM_CAPTURE_SINK). Build needs
+# libpipewire-0.3-dev + libspa-0.2-dev + clang on the host.
+[target.'cfg(target_os = "linux")'.dependencies]
+pipewire = "0.8"

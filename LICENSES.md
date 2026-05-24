@@ -22,6 +22,7 @@ This file records the licence of every direct third-party dependency. It is upda
 | `chrono` | Apache-2.0 OR MIT | Date/time formatting for filenames + future frontmatter |
 | `dirs` | MIT OR Apache-2.0 | Cross-platform user directories |
 | `screencapturekit` | MIT OR Apache-2.0 | macOS-only: system audio capture via ScreenCaptureKit (pinned `=3.1.3`; pulls `apple-cf`, `apple-metal`, `doom-fish-utils` — all MIT OR Apache-2.0) |
+| `pipewire` | MIT | Linux-only: system audio capture via PipeWire monitor source (pulls `pipewire-sys`, `libspa`, `libspa-sys` — all MIT; wraps libpipewire-0.3 which is MIT). Build host needs `libpipewire-0.3-dev`, `libspa-0.2-dev`, `clang`. |
 
 ## Node packages (direct dependencies — see `package.json`)
 

@@ -48,7 +48,10 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            libasound2-dev
+            libasound2-dev \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            clang
 
       # apple-metal 0.8.x's Swift bridge uses APIs from the macOS 26 SDK
       # (MTLSamplerDescriptor.reductionMode, .lodBias). macos-15 defaults

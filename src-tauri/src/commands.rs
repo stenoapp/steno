@@ -6,14 +6,14 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::audio::system::SystemAudioRecorder;
 
 const OPUS_BITRATE_BPS: i32 = 32_000;
 
 pub struct AppState {
     pub mic: Mutex<MicRecorder>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub system: Mutex<SystemAudioRecorder>,
 }
 
@@ -21,7 +21,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             mic: Mutex::new(MicRecorder::new()),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             system: Mutex::new(SystemAudioRecorder::new()),
         }
     }
@@ -30,18 +30,19 @@ impl AppState {
 #[tauri::command]
 pub fn start_recording(state: State<AppState>) -> Result<(), String> {
     // Start mic first — it's the indispensable source. If it fails, bail
-    // before touching SCK (avoids a misleading screen-recording-permission
-    // prompt for a mic device that's already broken).
+    // before touching the system stream (avoids misleading
+    // screen-recording / monitor-source permission prompts for a mic that's
+    // already broken).
     state.mic.lock().unwrap().start()?;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         if let Err(e) = state.system.lock().unwrap().start() {
             // Wind back the mic so the user can retry with system-audio
-            // disabled (M1.5) once we add a toggle. For M1.3 we hard-fail.
+            // disabled (M1.5) once we add a toggle. For M1.3/M1.4 hard-fail.
             let _ = state.mic.lock().unwrap().stop();
             return Err(format!(
-                "system audio start failed (Screen Recording permission may be required): {e}"
+                "system audio start failed (Screen Recording / PipeWire permission may be required): {e}"
             ));
         }
     }
@@ -51,18 +52,18 @@ pub fn start_recording(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn stop_recording(state: State<AppState>) -> Result<String, String> {
-    // Stop mic first to bound capture time. SCK is best-effort: its stream
-    // may still be delivering buffered samples on the audio thread; we
-    // accept whatever it has when we lock.
+    // Stop mic first to bound capture time. The system stream is
+    // best-effort: it may still be delivering buffered samples on the
+    // audio thread; we accept whatever it has when we lock.
     let mic_samples = state.mic.lock().unwrap().stop()?;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let system_samples = state.system.lock().unwrap().stop().unwrap_or_else(|e| {
         eprintln!("[steno] system stop warning (saving mic only): {e}");
         Vec::new()
     });
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let system_samples: Vec<f32> = Vec::new();
 
     let has_system = !system_samples.is_empty();
