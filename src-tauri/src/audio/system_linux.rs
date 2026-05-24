@@ -183,8 +183,10 @@ fn run_capture(
             }
             let data = &mut datas[0];
             let n_channels = ud.format.channels().max(1) as usize;
-            let Some(bytes) = data.data() else { return };
+            // chunk().size() before data() — data() returns &mut [u8] which
+            // would conflict with the immutable chunk() borrow otherwise.
             let chunk_bytes = data.chunk().size() as usize;
+            let Some(bytes) = data.data() else { return };
             if chunk_bytes == 0 || bytes.len() < chunk_bytes {
                 return;
             }
