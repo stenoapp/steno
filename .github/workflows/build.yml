@@ -31,20 +31,25 @@ jobs:
           # macos-14 (Xcode 15) and macos-latest both lack them; macos-15
           # ships Xcode 16 with the Sequoia SDK.
           - { os: macos-15, name: macOS }
-          - { os: ubuntu-22.04, name: Linux }
+          - { os: ubuntu-24.04, name: Linux }
           - { os: windows-latest, name: Windows }
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # Bumped 22.04 → 24.04 in M1.4: PipeWire 0.3.48 on 22.04 is older
+      # than what libspa-rs 0.8 expects (struct fields like
+      # spa_video_info_raw.flags don't exist there). 24.04 ships
+      # PipeWire 1.0.5 with the matching SPA headers. libayatana-
+      # appindicator3-dev replaces libappindicator3-dev (dropped in 24.04).
       - name: Install Linux build dependencies
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
             libssl-dev \
