@@ -25,11 +25,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Pinned: macos-latest's default Xcode lacked Metal 3 SDK symbols
-          # (MTLSamplerReductionMode) needed by apple-metal 0.8.5's Swift
-          # bridge — a transitive dep of screencapturekit. macos-14 ships
-          # Xcode 15+ which covers it.
-          - { os: macos-14, name: macOS }
+          # apple-metal 0.8.5 (transitive via screencapturekit) references
+          # macOS-15 SDK symbols (MTLResidencySet, MTLSamplerReductionMode,
+          # MTLFXTemporalScalerDescriptor.requiresSynchronousInitialization).
+          # macos-14 (Xcode 15) and macos-latest both lack them; macos-15
+          # ships Xcode 16 with the Sequoia SDK.
+          - { os: macos-15, name: macOS }
           - { os: ubuntu-22.04, name: Linux }
           - { os: windows-latest, name: Windows }
 
