@@ -93,6 +93,38 @@ h1 {
   opacity: 0.75;
 }
 
+.meters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 18rem;
+  margin: 0 auto 1rem;
+}
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+.meter-label {
+  width: 2.2rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
+}
+.meter-bar {
+  flex: 1;
+  height: 0.5rem;
+  background: rgba(127, 127, 127, 0.18);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4caf50 0%, #ffc107 70%, #e53935 95%);
+  transition: width 60ms linear;
+}
+
 .info, .error {
   max-width: 36rem;
   margin: 0.5rem auto;

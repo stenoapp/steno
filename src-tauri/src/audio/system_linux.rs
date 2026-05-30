@@ -17,6 +17,7 @@
 
 #![cfg(target_os = "linux")]
 
+use crate::audio::meter::Meter;
 use pipewire as pw;
 use pw::{properties::properties, spa};
 use spa::param::format::{MediaSubtype, MediaType};
@@ -35,20 +36,23 @@ pub const SYSTEM_AUDIO_SAMPLE_RATE: u32 = SAMPLE_RATE_HZ;
 struct StreamUserData {
     format: spa::param::audio::AudioInfoRaw,
     samples: Arc<Mutex<Vec<f32>>>,
+    meter: Meter,
 }
 
 pub struct SystemAudioRecorder {
     samples: Arc<Mutex<Vec<f32>>>,
     stop_tx: Option<pw::channel::Sender<()>>,
     thread: Option<JoinHandle<()>>,
+    meter: Meter,
 }
 
 impl SystemAudioRecorder {
-    pub fn new() -> Self {
+    pub fn new(meter: Meter) -> Self {
         Self {
             samples: Arc::new(Mutex::new(Vec::new())),
             stop_tx: None,
             thread: None,
+            meter,
         }
     }
 
@@ -65,10 +69,11 @@ impl SystemAudioRecorder {
         let (setup_tx, setup_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
         let samples = Arc::clone(&self.samples);
+        let meter = self.meter.clone();
         let thread = std::thread::Builder::new()
             .name("steno-pw-capture".into())
             .spawn(move || {
-                run_capture(samples, pw_receiver, setup_tx);
+                run_capture(samples, meter, pw_receiver, setup_tx);
             })
             .map_err(|e| format!("spawn pw thread: {e}"))?;
 
@@ -111,6 +116,7 @@ impl SystemAudioRecorder {
 
 fn run_capture(
     samples: Arc<Mutex<Vec<f32>>>,
+    meter: Meter,
     stop_rx: pw::channel::Receiver<()>,
     setup_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) {
@@ -153,6 +159,7 @@ fn run_capture(
     let user_data = StreamUserData {
         format: spa::param::audio::AudioInfoRaw::new(),
         samples: Arc::clone(&samples),
+        meter,
     };
 
     let stream = match pw::stream::Stream::new(&core, "steno-system-capture", props) {
@@ -202,6 +209,7 @@ fn run_capture(
                 std::slice::from_raw_parts(bytes.as_ptr().cast::<f32>(), total_samples)
             };
             let mut out = ud.samples.lock().unwrap();
+            let before = out.len();
             out.reserve(frames);
             if n_channels == 1 {
                 out.extend_from_slice(&floats[..frames]);
@@ -214,6 +222,8 @@ fn run_capture(
                     out.push(sum / n_channels as f32);
                 }
             }
+            let new_samples = &out[before..];
+            ud.meter.observe(new_samples);
         })
         .register()
     {

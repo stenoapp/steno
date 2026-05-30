@@ -1,3 +1,4 @@
+use crate::audio::meter::Meter;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -20,14 +21,16 @@ pub struct MicRecorder {
     stop_tx: Option<mpsc::Sender<()>>,
     thread: Option<JoinHandle<RecordingMeta>>,
     samples: Arc<Mutex<Vec<f32>>>,
+    meter: Meter,
 }
 
 impl MicRecorder {
-    pub fn new() -> Self {
+    pub fn new(meter: Meter) -> Self {
         Self {
             stop_tx: None,
             thread: None,
             samples: Arc::new(Mutex::new(Vec::new())),
+            meter,
         }
     }
 
@@ -38,6 +41,7 @@ impl MicRecorder {
 
         self.samples.lock().unwrap().clear();
         let samples = Arc::clone(&self.samples);
+        let meter = self.meter.clone();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<RecordingMeta, String>>();
 
@@ -82,9 +86,11 @@ impl MicRecorder {
             let build_result = match sample_format {
                 cpal::SampleFormat::F32 => {
                     let samples = Arc::clone(&samples);
+                    let meter = meter.clone();
                     device.build_input_stream(
                         &config,
                         move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                            meter.observe(data);
                             samples.lock().unwrap().extend_from_slice(data);
                         },
                         err_fn,
@@ -93,6 +99,7 @@ impl MicRecorder {
                 }
                 cpal::SampleFormat::I16 => {
                     let samples = Arc::clone(&samples);
+                    let meter = meter.clone();
                     device.build_input_stream(
                         &config,
                         move |data: &[i16], _: &cpal::InputCallbackInfo| {
@@ -101,6 +108,9 @@ impl MicRecorder {
                             for &s in data {
                                 buf.push(s as f32 / i16::MAX as f32);
                             }
+                            // Slice the just-pushed range to observe peak.
+                            let new_start = buf.len() - data.len();
+                            meter.observe(&buf[new_start..]);
                         },
                         err_fn,
                         None,
@@ -108,6 +118,7 @@ impl MicRecorder {
                 }
                 cpal::SampleFormat::U16 => {
                     let samples = Arc::clone(&samples);
+                    let meter = meter.clone();
                     device.build_input_stream(
                         &config,
                         move |data: &[u16], _: &cpal::InputCallbackInfo| {
@@ -116,6 +127,8 @@ impl MicRecorder {
                             for &s in data {
                                 buf.push((s as f32 - 32768.0) / 32768.0);
                             }
+                            let new_start = buf.len() - data.len();
+                            meter.observe(&buf[new_start..]);
                         },
                         err_fn,
                         None,

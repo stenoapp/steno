@@ -1,12 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+
+interface AudioLevel {
+  mic: number;
+  system: number;
+}
 
 function App() {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [lastFile, setLastFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [levels, setLevels] = useState<AudioLevel>({ mic: 0, system: 0 });
+  const unlistenRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!recording) return;
@@ -15,6 +23,30 @@ function App() {
       setElapsed(Math.floor((Date.now() - start) / 1000));
     }, 250);
     return () => window.clearInterval(timer);
+  }, [recording]);
+
+  useEffect(() => {
+    if (!recording) {
+      setLevels({ mic: 0, system: 0 });
+      return;
+    }
+    let active = true;
+    listen<AudioLevel>("audio-level", (event) => {
+      if (active) setLevels(event.payload);
+    }).then((unlisten) => {
+      if (active) {
+        unlistenRef.current = unlisten;
+      } else {
+        unlisten();
+      }
+    });
+    return () => {
+      active = false;
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
+    };
   }, [recording]);
 
   async function handleStart() {
@@ -46,7 +78,7 @@ function App() {
   return (
     <main className="container">
       <h1>Steno</h1>
-      <p className="subtitle">M1.1 · mic capture · v0.0.0</p>
+      <p className="subtitle">M1.5 · audio capture · v0.0.0</p>
 
       <div className="controls">
         {recording ? (
@@ -64,6 +96,13 @@ function App() {
         </p>
       </div>
 
+      {recording && (
+        <div className="meters" aria-hidden="true">
+          <LevelBar label="mic" level={levels.mic} />
+          <LevelBar label="sys" level={levels.system} />
+        </div>
+      )}
+
       {lastFile && !recording && (
         <p className="info">
           Saved <code>{lastFile}</code>
@@ -72,6 +111,20 @@ function App() {
 
       {error && <p className="error">{error}</p>}
     </main>
+  );
+}
+
+function LevelBar({ label, level }: { label: string; level: number }) {
+  // Map linear 0..1 to a perceptual 0..100% via sqrt — closer to how the
+  // ear hears loudness without going full log/dBFS.
+  const pct = Math.min(100, Math.max(0, Math.sqrt(Math.max(0, level)) * 100));
+  return (
+    <div className="meter">
+      <span className="meter-label">{label}</span>
+      <div className="meter-bar" role="meter" aria-valuemin={0} aria-valuemax={1} aria-valuenow={level}>
+        <div className="meter-fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
   );
 }
 

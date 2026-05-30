@@ -13,6 +13,7 @@
 
 #![cfg(target_os = "windows")]
 
+use crate::audio::meter::Meter;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -31,14 +32,16 @@ pub struct SystemAudioRecorder {
     stop_tx: Option<mpsc::Sender<()>>,
     thread: Option<JoinHandle<StreamMeta>>,
     samples: Arc<Mutex<Vec<f32>>>,
+    meter: Meter,
 }
 
 impl SystemAudioRecorder {
-    pub fn new() -> Self {
+    pub fn new(meter: Meter) -> Self {
         Self {
             stop_tx: None,
             thread: None,
             samples: Arc::new(Mutex::new(Vec::new())),
+            meter,
         }
     }
 
@@ -49,12 +52,13 @@ impl SystemAudioRecorder {
         self.samples.lock().unwrap().clear();
 
         let samples = Arc::clone(&self.samples);
+        let meter = self.meter.clone();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<StreamMeta, String>>();
 
         let handle = std::thread::Builder::new()
             .name("steno-wasapi-loopback".into())
-            .spawn(move || run_capture(samples, stop_rx, ready_tx))
+            .spawn(move || run_capture(samples, meter, stop_rx, ready_tx))
             .map_err(|e| format!("spawn wasapi loopback thread: {e}"))?;
 
         match ready_rx.recv().map_err(|e| format!("ready channel: {e}"))? {
@@ -84,6 +88,7 @@ impl SystemAudioRecorder {
 
 fn run_capture(
     samples: Arc<Mutex<Vec<f32>>>,
+    meter: Meter,
     stop_rx: mpsc::Receiver<()>,
     ready_tx: mpsc::Sender<Result<StreamMeta, String>>,
 ) -> StreamMeta {
@@ -130,9 +135,11 @@ fn run_capture(
     let build_result = match sample_format {
         cpal::SampleFormat::F32 => {
             let samples = Arc::clone(&samples);
+            let meter = meter.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    meter.observe(data);
                     samples.lock().unwrap().extend_from_slice(data);
                 },
                 err_fn,
@@ -141,6 +148,7 @@ fn run_capture(
         }
         cpal::SampleFormat::I16 => {
             let samples = Arc::clone(&samples);
+            let meter = meter.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
@@ -149,6 +157,8 @@ fn run_capture(
                     for &s in data {
                         buf.push(s as f32 / i16::MAX as f32);
                     }
+                    let new_start = buf.len() - data.len();
+                    meter.observe(&buf[new_start..]);
                 },
                 err_fn,
                 None,
@@ -156,6 +166,7 @@ fn run_capture(
         }
         cpal::SampleFormat::U16 => {
             let samples = Arc::clone(&samples);
+            let meter = meter.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
@@ -164,6 +175,8 @@ fn run_capture(
                     for &s in data {
                         buf.push((s as f32 - 32768.0) / 32768.0);
                     }
+                    let new_start = buf.len() - data.len();
+                    meter.observe(&buf[new_start..]);
                 },
                 err_fn,
                 None,

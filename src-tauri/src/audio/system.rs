@@ -12,6 +12,7 @@
 
 #![cfg(target_os = "macos")]
 
+use crate::audio::meter::Meter;
 use screencapturekit::prelude::*;
 use screencapturekit::{AudioBuffer, AudioBufferList};
 use std::sync::{Arc, Mutex};
@@ -27,6 +28,7 @@ const DUMMY_VIDEO_HEIGHT: u32 = 16;
 
 struct AudioCallback {
     samples: Arc<Mutex<Vec<f32>>>,
+    meter: Meter,
 }
 
 impl SCStreamOutputTrait for AudioCallback {
@@ -40,7 +42,10 @@ impl SCStreamOutputTrait for AudioCallback {
         };
 
         let mut samples = self.samples.lock().unwrap();
+        let before = samples.len();
         append_downmixed(&mut samples, &audio_list);
+        let new_samples = &samples[before..];
+        self.meter.observe(new_samples);
     }
 }
 
@@ -127,13 +132,15 @@ pub const SYSTEM_AUDIO_SAMPLE_RATE: u32 = SAMPLE_RATE_HZ;
 pub struct SystemAudioRecorder {
     stream: Option<SCStream>,
     samples: Arc<Mutex<Vec<f32>>>,
+    meter: Meter,
 }
 
 impl SystemAudioRecorder {
-    pub fn new() -> Self {
+    pub fn new(meter: Meter) -> Self {
         Self {
             stream: None,
             samples: Arc::new(Mutex::new(Vec::new())),
+            meter,
         }
     }
 
@@ -168,6 +175,7 @@ impl SystemAudioRecorder {
         let mut stream = SCStream::new(&filter, &config);
         let audio_handler = AudioCallback {
             samples: Arc::clone(&self.samples),
+            meter: self.meter.clone(),
         };
         stream.add_output_handler(audio_handler, SCStreamOutputType::Audio);
         stream.add_output_handler(DiscardScreenCallback, SCStreamOutputType::Screen);

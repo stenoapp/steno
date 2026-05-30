@@ -1,5 +1,6 @@
 pub mod capture;
 pub mod encode;
+pub mod meter;
 pub mod mixer;
 
 #[cfg(target_os = "macos")]
