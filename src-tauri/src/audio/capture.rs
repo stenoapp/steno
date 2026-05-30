@@ -1,15 +1,13 @@
 use crate::audio::meter::Meter;
+use crate::audio::resample::resample_mono_to_48k;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-const TARGET_SAMPLE_RATE_HZ: u32 = 48_000;
-
 pub struct RecordingMeta {
-    // Always equal to TARGET_SAMPLE_RATE_HZ if start() returned Ok;
-    // kept on the struct for future M1.4 mix logic.
-    #[allow(dead_code)]
+    // The device's native sample rate. If it isn't 48 kHz, samples get
+    // resampled in `stop()` via crate::audio::resample.
     pub sample_rate: u32,
     pub channels: u16,
 }
@@ -66,18 +64,15 @@ impl MicRecorder {
             let sample_rate = supported.sample_rate().0;
             let channels = supported.channels();
 
-            if sample_rate != TARGET_SAMPLE_RATE_HZ {
-                let _ = ready_tx.send(Err(format!(
-                    "device sample rate is {sample_rate} Hz; M1 requires {TARGET_SAMPLE_RATE_HZ} Hz (resampling lands in a later M1 sub-step)"
-                )));
-                return RecordingMeta { sample_rate, channels };
-            }
-            if channels < 1 || channels > 8 {
+            if !(1..=8).contains(&channels) {
                 let _ = ready_tx.send(Err(format!(
                     "device reports {channels} channels; refusing to capture (downmix supports 1-8)"
                 )));
                 return RecordingMeta { sample_rate, channels };
             }
+            // Non-48 kHz devices are accepted; their samples get resampled
+            // in stop() via resample::resample_mono_to_48k. This is the
+            // M1.5 path that replaces the M1.1-era hard error.
 
             let sample_format = supported.sample_format();
             let config: cpal::StreamConfig = supported.into();
@@ -176,8 +171,8 @@ impl MicRecorder {
     }
 
     /// Stop the cpal stream and return the captured samples downmixed to
-    /// mono. Sample rate is always 48 kHz (enforced at start). Caller owns
-    /// the samples — encoding happens in `commands.rs`.
+    /// mono and resampled to 48 kHz. Caller owns the samples — encoding
+    /// happens in `commands.rs`.
     pub fn stop(&mut self) -> Result<Vec<f32>, String> {
         let stop_tx = self.stop_tx.take().ok_or("not recording")?;
         let thread = self.thread.take().ok_or("not recording")?;
@@ -186,7 +181,8 @@ impl MicRecorder {
         let meta = thread.join().map_err(|_| "audio thread panicked")?;
 
         let interleaved = std::mem::take(&mut *self.samples.lock().unwrap());
-        Ok(downmix_to_mono(&interleaved, meta.channels))
+        let mono = downmix_to_mono(&interleaved, meta.channels);
+        Ok(resample_mono_to_48k(&mono, meta.sample_rate))
     }
 }
 

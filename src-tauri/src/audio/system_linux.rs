@@ -18,12 +18,14 @@
 #![cfg(target_os = "linux")]
 
 use crate::audio::meter::Meter;
+use crate::audio::resample::resample_mono_to_48k;
 use pipewire as pw;
 use pw::{properties::properties, spa};
 use spa::param::format::{MediaSubtype, MediaType};
 use spa::param::format_utils;
 use spa::pod::Pod;
 use std::mem;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -37,6 +39,9 @@ struct StreamUserData {
     format: spa::param::audio::AudioInfoRaw,
     samples: Arc<Mutex<Vec<f32>>>,
     meter: Meter,
+    // PipeWire negotiates the actual rate in param_changed; stop() reads
+    // it here for the resample step. 0 means "not yet negotiated".
+    sample_rate: Arc<AtomicU32>,
 }
 
 pub struct SystemAudioRecorder {
@@ -44,6 +49,7 @@ pub struct SystemAudioRecorder {
     stop_tx: Option<pw::channel::Sender<()>>,
     thread: Option<JoinHandle<()>>,
     meter: Meter,
+    sample_rate: Arc<AtomicU32>,
 }
 
 impl SystemAudioRecorder {
@@ -53,6 +59,7 @@ impl SystemAudioRecorder {
             stop_tx: None,
             thread: None,
             meter,
+            sample_rate: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -70,10 +77,12 @@ impl SystemAudioRecorder {
 
         let samples = Arc::clone(&self.samples);
         let meter = self.meter.clone();
+        let sample_rate = Arc::clone(&self.sample_rate);
+        self.sample_rate.store(0, Ordering::Relaxed);
         let thread = std::thread::Builder::new()
             .name("steno-pw-capture".into())
             .spawn(move || {
-                run_capture(samples, meter, pw_receiver, setup_tx);
+                run_capture(samples, meter, sample_rate, pw_receiver, setup_tx);
             })
             .map_err(|e| format!("spawn pw thread: {e}"))?;
 
@@ -99,7 +108,8 @@ impl SystemAudioRecorder {
         }
     }
 
-    /// Stop the PipeWire stream and return the captured mono Float32 samples.
+    /// Stop the PipeWire stream and return the captured mono Float32 samples,
+    /// resampled to 48 kHz if PipeWire negotiated a different rate.
     /// Returns Ok with whatever was captured even on join errors because the
     /// user's audio data is precious.
     pub fn stop(&mut self) -> Result<Vec<f32>, String> {
@@ -110,13 +120,20 @@ impl SystemAudioRecorder {
             let _ = thread.join();
         }
         let samples = std::mem::take(&mut *self.samples.lock().unwrap());
-        Ok(samples)
+        let rate = self.sample_rate.load(Ordering::Relaxed);
+        if rate == 0 {
+            // param_changed never fired (no audio? broken negotiation?). Skip
+            // the resample step and return whatever we have.
+            return Ok(samples);
+        }
+        Ok(resample_mono_to_48k(&samples, rate))
     }
 }
 
 fn run_capture(
     samples: Arc<Mutex<Vec<f32>>>,
     meter: Meter,
+    sample_rate: Arc<AtomicU32>,
     stop_rx: pw::channel::Receiver<()>,
     setup_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) {
@@ -160,6 +177,7 @@ fn run_capture(
         format: spa::param::audio::AudioInfoRaw::new(),
         samples: Arc::clone(&samples),
         meter,
+        sample_rate: Arc::clone(&sample_rate),
     };
 
     let stream = match pw::stream::Stream::new(&core, "steno-system-capture", props) {
@@ -179,8 +197,10 @@ fn run_capture(
                 return;
             }
             // Stash the negotiated rate/channels so the process callback
-            // knows how many channels each frame has.
+            // knows how many channels each frame has, and so stop() can
+            // resample to 48 kHz if PipeWire picked a different rate.
             let _ = ud.format.parse(param);
+            ud.sample_rate.store(ud.format.rate(), Ordering::Relaxed);
         })
         .process(|stream, ud| {
             let Some(mut buffer) = stream.dequeue_buffer() else { return };

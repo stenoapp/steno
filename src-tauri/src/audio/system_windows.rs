@@ -14,6 +14,7 @@
 #![cfg(target_os = "windows")]
 
 use crate::audio::meter::Meter;
+use crate::audio::resample::resample_mono_to_48k;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -26,6 +27,7 @@ pub const SYSTEM_AUDIO_SAMPLE_RATE: u32 = SAMPLE_RATE_HZ;
 
 struct StreamMeta {
     channels: u16,
+    sample_rate: u32,
 }
 
 pub struct SystemAudioRecorder {
@@ -82,7 +84,8 @@ impl SystemAudioRecorder {
         let meta = thread.join().map_err(|_| "wasapi loopback thread panicked")?;
 
         let interleaved = std::mem::take(&mut *self.samples.lock().unwrap());
-        Ok(downmix_to_mono(&interleaved, meta.channels))
+        let mono = downmix_to_mono(&interleaved, meta.channels);
+        Ok(resample_mono_to_48k(&mono, meta.sample_rate))
     }
 }
 
@@ -97,7 +100,7 @@ fn run_capture(
         Some(d) => d,
         None => {
             let _ = ready_tx.send(Err("no default output device".into()));
-            return StreamMeta { channels: 0 };
+            return StreamMeta { channels: 0, sample_rate: 0 };
         }
     };
 
@@ -108,25 +111,20 @@ fn run_capture(
         Ok(c) => c,
         Err(e) => {
             let _ = ready_tx.send(Err(format!("default output config: {e}")));
-            return StreamMeta { channels: 0 };
+            return StreamMeta { channels: 0, sample_rate: 0 };
         }
     };
 
     let sample_rate = supported.sample_rate().0;
     let channels = supported.channels();
 
-    if sample_rate != SAMPLE_RATE_HZ {
-        let _ = ready_tx.send(Err(format!(
-            "output device sample rate is {sample_rate} Hz; M1 requires {SAMPLE_RATE_HZ} Hz (rubato resampling lands in M1.5)"
-        )));
-        return StreamMeta { channels };
-    }
     if !(1..=8).contains(&channels) {
         let _ = ready_tx.send(Err(format!(
             "output device reports {channels} channels; downmix supports 1-8"
         )));
-        return StreamMeta { channels };
+        return StreamMeta { channels, sample_rate };
     }
+    // Non-48k devices are accepted; resampling happens at stop() time.
 
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
@@ -184,7 +182,7 @@ fn run_capture(
         }
         other => {
             let _ = ready_tx.send(Err(format!("unsupported sample format: {other:?}")));
-            return StreamMeta { channels };
+            return StreamMeta { channels, sample_rate };
         }
     };
 
@@ -192,21 +190,21 @@ fn run_capture(
         Ok(s) => s,
         Err(e) => {
             let _ = ready_tx.send(Err(format!("build_input_stream on output device (loopback): {e}")));
-            return StreamMeta { channels };
+            return StreamMeta { channels, sample_rate };
         }
     };
 
     if let Err(e) = stream.play() {
         let _ = ready_tx.send(Err(format!("stream play: {e}")));
-        return StreamMeta { channels };
+        return StreamMeta { channels, sample_rate };
     }
 
-    let _ = ready_tx.send(Ok(StreamMeta { channels }));
+    let _ = ready_tx.send(Ok(StreamMeta { channels, sample_rate }));
 
     let _ = stop_rx.recv();
     drop(stream);
 
-    StreamMeta { channels }
+    StreamMeta { channels, sample_rate }
 }
 
 fn downmix_to_mono(interleaved: &[f32], channels: u16) -> Vec<f32> {

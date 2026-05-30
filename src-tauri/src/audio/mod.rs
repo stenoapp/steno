@@ -2,6 +2,7 @@ pub mod capture;
 pub mod encode;
 pub mod meter;
 pub mod mixer;
+pub mod resample;
 
 #[cfg(target_os = "macos")]
 pub mod system;
