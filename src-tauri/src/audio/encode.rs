@@ -21,6 +21,15 @@ pub struct OpusOggWriter {
     serial: u32,
     granule: u64,
     channels: u16,
+    // Streaming state (M1.5):
+    // partial holds samples that don't yet make a full 20 ms frame; they
+    // get flushed during the next feed() once the buffer crosses the
+    // frame-size threshold, or padded with silence in finalize().
+    partial: Vec<f32>,
+    // The most-recently encoded packet is held back so finalize() can
+    // mark it as EndStream (the OGG EOS flag lives on the page-end info
+    // for the LAST packet; we can't retroactively flip it once written).
+    pending: Option<(Vec<u8>, u64)>,
 }
 
 impl OpusOggWriter {
@@ -67,58 +76,85 @@ impl OpusOggWriter {
             serial,
             granule: 0,
             channels,
+            partial: Vec::new(),
+            pending: None,
         })
     }
 
-    pub fn encode_pcm(&mut self, samples: &[f32]) -> Result<(), String> {
-        let interleaved_frame = SAMPLES_PER_FRAME * self.channels as usize;
+    /// Stream `samples` into the encoder. Whole-frame multiples get
+    /// encoded immediately; a sub-frame remainder is buffered for the
+    /// next call. The most recent encoded packet is always held back so
+    /// `finalize()` can mark the true final packet with the EndStream
+    /// page flag.
+    pub fn feed(&mut self, samples: &[f32]) -> Result<(), String> {
         if samples.is_empty() {
             return Ok(());
         }
-
-        let mut input = vec![0.0f32; interleaved_frame];
+        let interleaved_frame = SAMPLES_PER_FRAME * self.channels as usize;
         let mut packet = vec![0u8; MAX_PACKET_BYTES];
 
-        let total_frames = samples.len().div_ceil(interleaved_frame);
+        self.partial.extend_from_slice(samples);
 
-        for frame_idx in 0..total_frames {
-            let start = frame_idx * interleaved_frame;
-            let end = (start + interleaved_frame).min(samples.len());
-            let chunk = &samples[start..end];
-
-            input[..chunk.len()].copy_from_slice(chunk);
-            // Zero-pad the tail of the last frame if needed.
-            for slot in input[chunk.len()..].iter_mut() {
-                *slot = 0.0;
-            }
-
+        while self.partial.len() >= interleaved_frame {
+            let frame: Vec<f32> = self.partial.drain(..interleaved_frame).collect();
             let bytes_written = self
                 .encoder
-                .encode_float(&input, &mut packet)
+                .encode_float(&frame, &mut packet)
                 .map_err(|e| format!("opus encode_float: {e}"))?;
-
             self.granule += SAMPLES_PER_FRAME as u64;
-
-            let end_info = if frame_idx + 1 == total_frames {
-                PacketWriteEndInfo::EndStream
-            } else {
-                PacketWriteEndInfo::NormalPacket
-            };
-
-            self.writer
-                .write_packet(
-                    packet[..bytes_written].to_vec(),
-                    self.serial,
-                    end_info,
-                    self.granule,
-                )
-                .map_err(|e| format!("ogg write_packet: {e}"))?;
+            self.flush_pending_as_normal()?;
+            self.pending = Some((packet[..bytes_written].to_vec(), self.granule));
         }
-
         Ok(())
     }
 
-    pub fn finalize(self) -> Result<(), String> {
+    fn flush_pending_as_normal(&mut self) -> Result<(), String> {
+        if let Some((bytes, granule)) = self.pending.take() {
+            self.writer
+                .write_packet(bytes, self.serial, PacketWriteEndInfo::NormalPacket, granule)
+                .map_err(|e| format!("ogg write_packet: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Drain the partial-frame buffer, write the final EndStream-marked
+    /// packet, and close the file. Consumes self so callers can't keep
+    /// using a finalized writer.
+    pub fn finalize(mut self) -> Result<(), String> {
+        let interleaved_frame = SAMPLES_PER_FRAME * self.channels as usize;
+        let mut packet = vec![0u8; MAX_PACKET_BYTES];
+
+        if !self.partial.is_empty() {
+            // Encode the (zero-padded) remainder as the new "last packet";
+            // the prior pending packet (if any) is no longer last.
+            let mut input = vec![0.0f32; interleaved_frame];
+            input[..self.partial.len()].copy_from_slice(&self.partial);
+            self.partial.clear();
+            let bytes_written = self
+                .encoder
+                .encode_float(&input, &mut packet)
+                .map_err(|e| format!("opus encode_float (final partial): {e}"))?;
+            self.granule += SAMPLES_PER_FRAME as u64;
+            self.flush_pending_as_normal()?;
+            self.pending = Some((packet[..bytes_written].to_vec(), self.granule));
+        } else if self.pending.is_none() {
+            // Nothing was ever fed — synthesize a silent frame so the
+            // file has at least one Opus packet with the EOS marker.
+            let input = vec![0.0f32; interleaved_frame];
+            let bytes_written = self
+                .encoder
+                .encode_float(&input, &mut packet)
+                .map_err(|e| format!("opus encode_float (silence): {e}"))?;
+            self.granule += SAMPLES_PER_FRAME as u64;
+            self.pending = Some((packet[..bytes_written].to_vec(), self.granule));
+        }
+
+        // pending is guaranteed Some at this point.
+        let (bytes, granule) = self.pending.take().expect("pending packet for EOS");
+        self.writer
+            .write_packet(bytes, self.serial, PacketWriteEndInfo::EndStream, granule)
+            .map_err(|e| format!("ogg write final EOS packet: {e}"))?;
+
         let buf = self.writer.into_inner();
         buf.into_inner().map_err(|e| format!("flush: {e}"))?;
         Ok(())

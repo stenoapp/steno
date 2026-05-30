@@ -139,8 +139,12 @@ pub fn stop_recording(state: State<AppState>) -> Result<String, String> {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("create dir {}: {e}", parent.display()))?;
     }
+    // Stream the mixed PCM into the encoder. feed() can be called multiple
+    // times — for now we hand it the whole mix in one shot; the worker-
+    // thread streaming architecture that uses feed() during capture lives
+    // in the M7 backlog (see plan/pending.md).
     let mut writer = OpusOggWriter::new(&path, 1, OPUS_BITRATE_BPS)?;
-    writer.encode_pcm(&mixed)?;
+    writer.feed(&mixed)?;
     writer.finalize()?;
 
     Ok(path.to_string_lossy().to_string())
