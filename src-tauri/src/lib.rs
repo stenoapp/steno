@@ -10,6 +10,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_recording,
             commands::stop_recording,
+            commands::open_permission_panel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

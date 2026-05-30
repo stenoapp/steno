@@ -10,6 +10,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
+/// String tag in error messages that lets the frontend offer a one-click
+/// "Open System Settings" button via the open_permission_panel command.
+/// Keep in sync with frontend's permission-error detector.
+const PERM_HINT_MIC: &str = "[STENO_PERM:microphone]";
+const PERM_HINT_SCREEN: &str = "[STENO_PERM:screen-capture]";
+
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 use crate::audio::system::SystemAudioRecorder;
 
@@ -58,7 +64,9 @@ pub fn start_recording(state: State<AppState>, app: AppHandle) -> Result<(), Str
     // before touching the system stream (avoids misleading
     // screen-recording / monitor-source permission prompts for a mic that's
     // already broken).
-    state.mic.lock().unwrap().start()?;
+    if let Err(e) = state.mic.lock().unwrap().start() {
+        return Err(humanize_mic_error(e));
+    }
 
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
@@ -66,9 +74,7 @@ pub fn start_recording(state: State<AppState>, app: AppHandle) -> Result<(), Str
             // Wind back the mic so the user can retry with system-audio
             // disabled (M1.5) once we add a toggle. Hard-fail for now.
             let _ = state.mic.lock().unwrap().stop();
-            return Err(format!(
-                "system audio start failed (Screen Recording / PipeWire / WASAPI permission may be required): {e}"
-            ));
+            return Err(humanize_system_error(e));
         }
     }
 
@@ -145,4 +151,125 @@ fn audio_output_path() -> Result<PathBuf, String> {
     let dir = documents.join("Steno").join(".steno").join("audio");
     let stamp = Local::now().format("%Y-%m-%d-%H%M%S").to_string();
     Ok(dir.join(format!("{stamp}.opus")))
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Permission UX (M1.5)
+//
+// The system-audio path can fail on each OS for reasons that look like
+// "permission denied" once you know what to look for:
+//   - macOS: ScreenCaptureKit needs Screen Recording perm
+//   - macOS: cpal needs Microphone perm
+//   - Linux: PipeWire daemon not running, or no monitor source available
+//   - Windows: WASAPI device busy, or mic privacy setting off
+// We rewrite raw errors to actionable text and tag them with a marker
+// the frontend uses to surface an "Open Settings" button.
+
+fn humanize_mic_error(raw: String) -> String {
+    let lower = raw.to_lowercase();
+    if lower.contains("no default input device") {
+        return format!("No input device found. Plug in a mic or check OS audio settings. {PERM_HINT_MIC} (raw: {raw})");
+    }
+    if lower.contains("permission") || lower.contains("not authorized") {
+        return format!("Microphone permission denied. {PERM_HINT_MIC} (raw: {raw})");
+    }
+    // Unknown error — pass through but still tag it so the UI can offer
+    // the help button. Microphone perms are the single most common cause
+    // of mystery cpal failures.
+    format!("Microphone start failed. {PERM_HINT_MIC} (raw: {raw})")
+}
+
+fn humanize_system_error(raw: String) -> String {
+    let lower = raw.to_lowercase();
+    #[cfg(target_os = "macos")]
+    {
+        if lower.contains("scshareablecontent") || lower.contains("screen recording") {
+            return format!("Screen Recording permission needed for system audio. {PERM_HINT_SCREEN} (raw: {raw})");
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if lower.contains("pipewire") || lower.contains("connect") {
+            return format!("PipeWire daemon doesn't appear to be running. Try: systemctl --user start pipewire pipewire-pulse wireplumber. (raw: {raw})");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if lower.contains("device") && (lower.contains("busy") || lower.contains("in use")) {
+            return format!("Default audio output is busy. Close other apps that may be using it exclusively. (raw: {raw})");
+        }
+    }
+    format!("System audio start failed. {PERM_HINT_SCREEN} (raw: {raw})")
+}
+
+/// Opens the OS-native system settings panel for a given permission kind.
+/// `kind` is currently one of "microphone" or "screen-capture". The frontend
+/// invokes this from the error toast's "Open Settings" button.
+#[tauri::command]
+pub fn open_permission_panel(kind: String) -> Result<(), String> {
+    match kind.as_str() {
+        "microphone" => open_mic_settings(),
+        "screen-capture" => open_screen_capture_settings(),
+        other => Err(format!("unknown permission kind: {other}")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_mic_settings() -> Result<(), String> {
+    spawn_open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+}
+#[cfg(target_os = "macos")]
+fn open_screen_capture_settings() -> Result<(), String> {
+    spawn_open("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+}
+
+#[cfg(target_os = "windows")]
+fn open_mic_settings() -> Result<(), String> {
+    spawn_open("ms-settings:privacy-microphone")
+}
+#[cfg(target_os = "windows")]
+fn open_screen_capture_settings() -> Result<(), String> {
+    // Windows has no Screen Recording panel; loopback capture isn't
+    // permission-gated. Open the general privacy page.
+    spawn_open("ms-settings:privacy")
+}
+
+#[cfg(target_os = "linux")]
+fn open_mic_settings() -> Result<(), String> {
+    // Best-effort: most desktops use gnome-control-center sound; the URL
+    // is desktop-specific so we don't try to guess. Tell the user what to
+    // look for instead.
+    Err("On Linux, microphone access is configured per app via your desktop's privacy/sound settings. Look for an Input or Microphone panel.".into())
+}
+#[cfg(target_os = "linux")]
+fn open_screen_capture_settings() -> Result<(), String> {
+    Err("On Linux, system audio capture is handled by PipeWire — there is no OS-level permission panel. Confirm the daemon is running: systemctl --user status pipewire.".into())
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_open(url: &str) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("open {url}: {e}"))
+}
+#[cfg(target_os = "windows")]
+fn spawn_open(url: &str) -> Result<(), String> {
+    // `start` is a cmd builtin; an empty title is required so the URL
+    // isn't interpreted as the window title.
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "", url])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("start {url}: {e}"))
+}
+#[cfg(target_os = "linux")]
+#[allow(dead_code)]
+fn spawn_open(url: &str) -> Result<(), String> {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("xdg-open {url}: {e}"))
 }

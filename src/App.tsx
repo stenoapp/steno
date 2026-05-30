@@ -109,8 +109,53 @@ function App() {
         </p>
       )}
 
-      {error && <p className="error">{error}</p>}
+      {error && <ErrorBox raw={error} onClear={() => setError(null)} />}
     </main>
+  );
+}
+
+// Backend tags permission errors with these markers so the UI can offer a
+// one-click "Open Settings" button. Keep in sync with commands.rs.
+const PERM_MARKERS = {
+  microphone: "[STENO_PERM:microphone]",
+  "screen-capture": "[STENO_PERM:screen-capture]",
+} as const;
+
+type PermKind = keyof typeof PERM_MARKERS;
+
+function ErrorBox({ raw, onClear }: { raw: string; onClear: () => void }) {
+  const permKind = (Object.keys(PERM_MARKERS) as PermKind[]).find((k) =>
+    raw.includes(PERM_MARKERS[k]),
+  );
+  // Strip the marker tag from the visible text.
+  const visible = permKind ? raw.replace(PERM_MARKERS[permKind], "").trim() : raw;
+
+  async function handleOpen() {
+    if (!permKind) return;
+    try {
+      await invoke("open_permission_panel", { kind: permKind });
+      onClear();
+    } catch (e) {
+      // Linux returns a message instead of opening — surface it.
+      // Re-tag-free so we don't loop the button.
+      const msg = String(e).replace(PERM_MARKERS[permKind], "").trim();
+      // eslint-disable-next-line no-alert
+      alert(msg);
+    }
+  }
+
+  return (
+    <p className="error">
+      {visible}
+      {permKind && (
+        <>
+          {" "}
+          <button type="button" className="link-btn" onClick={handleOpen}>
+            Open Settings
+          </button>
+        </>
+      )}
+    </p>
   );
 }
 
